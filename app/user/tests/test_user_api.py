@@ -8,6 +8,7 @@ from rest_framework import status
 
 CREATE_USER_URL = reverse('user:create')
 TOKEN_URL = reverse('user:token')
+ME_URL = reverse('user:me')
 
 
 def create_user(**params):
@@ -28,7 +29,6 @@ class PublicUserAPITests(TestCase):
             'name': 'Test name'
         }
         res = self.client.post(CREATE_USER_URL, payload)
-
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         user = get_user_model().objects.get(**res.data)
         self.assertTrue(user.check_password(payload['password']))
@@ -39,9 +39,7 @@ class PublicUserAPITests(TestCase):
         payload = {'email': 'test@stuffedpenguinstudios.com',
                    'password': 'testpass'}
         create_user(**payload)
-
         res = self.client.post(CREATE_USER_URL, payload)
-
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
     
     def test_password_too_short(self):
@@ -60,7 +58,6 @@ class PublicUserAPITests(TestCase):
                    'password': 'testpass'}
         create_user(**payload)
         res = self.client.post(TOKEN_URL, payload)
-
         self.assertIn('token', res.data)
         # ASsume that this token works since it is part of the django package
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -72,7 +69,6 @@ class PublicUserAPITests(TestCase):
         payload = {'email': 'test@stuffedpenguinstudios.com',
                    'password': 'wrong'}
         res = self.client.post(TOKEN_URL, payload)
-
         self.assertNotIn('toekn', res.data)
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
     
@@ -81,7 +77,6 @@ class PublicUserAPITests(TestCase):
         payload = {'email': 'test@stuffedpenguinstudios.com', 
                    'password': 'testpass'}
         res = self.client.post(TOKEN_URL, payload)
-
         self.assertNotIn('token', res.data)
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
     
@@ -90,3 +85,48 @@ class PublicUserAPITests(TestCase):
         res = self.client.post(TOKEN_URL, {'email': 'one', 'password': ''})
         self.assertNotIn('token', res.data)
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+    
+    def test_retrieve_user_unauthorized(self):
+        """Test that Authentication is required for users"""
+        res = self.client.get(ME_URL)
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class PrivateUserApiTests(TestCase):
+    """Test API requests that require authentication"""
+
+    def setUp(self):
+        self.user = create_user(
+            email='test@stuffedpenguinstudios.com',
+            password='testpass',
+            name='name'
+        )
+        self.client = APIClient()
+        # Helper function to simulate authenticated request.
+        self.client.force_authenticate(user=self.user)
+    
+    def test_retrieve_profile_success(self):
+        """Test retrieving profile for logged in user"""
+        res = self.client.get(ME_URL)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data, {
+            'name': self.user.name,
+            'email': self.user.email
+        })
+    
+    def test_post_me_not_allowed(self):
+        """Test that POST is not allow on the me url 
+        (only PUT or PATCH are allowed for updates)"""
+        res = self.client.post(ME_URL, {})
+        self.assertEqual(res.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
+    
+    def test_update_user_profile(self):
+        """Test updating the user profile for the authenticated user"""
+        payload = {'name': 'new_name', 'password': 'newpassword123'}
+        res = self.client.patch(ME_URL, payload)
+        # update the user values
+        self.user.refresh_from_db()
+        
+        self.assertEqual(self.user.name, payload['name'])
+        self.assertTrue(self.user.check_password(payload['password']))
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
